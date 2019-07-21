@@ -189,8 +189,13 @@ static msg_t eeprom_write(const I2CEepromFileConfig *eepcfg, uint32_t offset,
  */
 static size_t __clamp_size(void *ip, size_t n) {
 
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  if (((size_t)eepfs_getposition(ip, 0) + n) > (size_t)eepfs_getsize(ip, 0))
+    return eepfs_getsize(ip, 0) - eepfs_getposition(ip, 0);
+#else
   if (((size_t)eepfs_getposition(ip) + n) > (size_t)eepfs_getsize(ip))
     return eepfs_getsize(ip) - eepfs_getposition(ip);
+#endif
   else
     return n;
 }
@@ -198,18 +203,29 @@ static size_t __clamp_size(void *ip, size_t n) {
 /**
  * @brief   Write data that can be fitted in one page boundary
  */
-static void __fitted_write(void *ip, const uint8_t *data, size_t len, uint32_t *written) {
+static msg_t __fitted_write(void *ip, const uint8_t *data, size_t len, uint32_t *written) {
 
   msg_t status = MSG_RESET;
+  msg_t pos;
 
   osalDbgAssert(len > 0, "len must be greater than 0");
 
-  status = eeprom_write(((I2CEepromFileStream *)ip)->cfg,
-                        eepfs_getposition(ip), data, len);
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  pos = eepfs_getposition(ip, 0);
+#else
+  pos = eepfs_getposition(ip);
+#endif
+
+  status = eeprom_write(((I2CEepromFileStream *)ip)->cfg, pos, data, len);
   if (status == MSG_OK) {
     *written += len;
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+    eepfs_setposition(ip, eepfs_getposition(ip, 0) + len);
+#else
     eepfs_lseek(ip, eepfs_getposition(ip) + len);
+#endif
   }
+  return status;
 }
 
 /**
@@ -226,6 +242,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
   uint16_t pagesize;
   uint32_t firstpage;
   uint32_t lastpage;
+  msg_t pos;
 
   osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL));
 
@@ -236,11 +253,15 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
   if (n == 0)
     return 0;
 
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  pos = eepfs_getposition(ip, 0);
+#else
+  pos = eepfs_getposition(ip);
+#endif
+
   pagesize  =  ((EepromFileStream *)ip)->cfg->pagesize;
-  firstpage = (((EepromFileStream *)ip)->cfg->barrier_low +
-               eepfs_getposition(ip)) / pagesize;
-  lastpage  = (((EepromFileStream *)ip)->cfg->barrier_low +
-               eepfs_getposition(ip) + n - 1) / pagesize;
+  firstpage = (((EepromFileStream *)ip)->cfg->barrier_low + pos) / pagesize;
+  lastpage  = (((EepromFileStream *)ip)->cfg->barrier_low + pos + n - 1) / pagesize;
 
   /* data fits in single page */
   if (firstpage == lastpage) {
@@ -251,7 +272,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
 
   else {
     /* write first piece of data to first page boundary */
-    len =  ((firstpage + 1) * pagesize) - eepfs_getposition(ip);
+    len =  ((firstpage + 1) * pagesize) - pos;
     len -= ((EepromFileStream *)ip)->cfg->barrier_low;
     if (__fitted_write(ip, bp, len, &written) != MSG_OK)
       return written;
@@ -284,6 +305,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
  */
 static size_t read(void *ip, uint8_t *bp, size_t n) {
   msg_t status = MSG_OK;
+  msg_t pos;
 
   osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL));
 
@@ -299,6 +321,29 @@ static size_t read(void *ip, uint8_t *bp, size_t n) {
 #if defined(STM32F1XX_I2C)
   if (n == 1) {
     uint8_t __buf[2];
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+    /* if NOT last byte of file requested */
+    if ((eepfs_getposition(ip, 0) + 1) < eepfs_getsize(ip, 0)) {
+      if (read(ip, __buf, 2) == 2) {
+        eepfs_setposition(ip, (eepfs_getposition(ip, 0) + 1));
+        bp[0] = __buf[0];
+        return 1;
+      }
+      else
+        return 0;
+    }
+    else {
+      eepfs_setposition(ip, (eepfs_getposition(ip, 0) - 1));
+      if (read(ip, __buf, 2) == 2) {
+        eepfs_setposition(ip, (eepfs_getposition(ip, 0) + 2));
+        bp[0] = __buf[1];
+        return 1;
+      }
+      else
+        return 0;
+    }
+    pos = eepfs_getposition(ip, 0);
+#else /*  _CHIBIOS_HAL_CONF_VER_7_0_ */
     /* if NOT last byte of file requested */
     if ((eepfs_getposition(ip) + 1) < eepfs_getsize(ip)) {
       if (read(ip, __buf, 2) == 2) {
@@ -319,16 +364,21 @@ static size_t read(void *ip, uint8_t *bp, size_t n) {
       else
         return 0;
     }
+#endif /* ! _CHIBIOS_HAL_CONF_VER_7_0_ */
+    pos = eepfs_getposition(ip, 0);
   }
 #endif /* defined(STM32F1XX_I2C) */
 
   /* call low level function */
-  status  = eeprom_read(((I2CEepromFileStream *)ip)->cfg,
-                        eepfs_getposition(ip), bp, n);
+  status  = eeprom_read(((I2CEepromFileStream *)ip)->cfg, pos, bp, n);
   if (status != MSG_OK)
     return 0;
   else {
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+    eepfs_setposition(ip, (eepfs_getposition(ip, 0) + n));
+#else
     eepfs_lseek(ip, (eepfs_getposition(ip) + n));
+#endif
     return n;
   }
 }
@@ -343,7 +393,11 @@ static const struct EepromFileStreamVMT vmt = {
   eepfs_geterror,
   eepfs_getsize,
   eepfs_getposition,
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  eepfs_setposition,
+#else
   eepfs_lseek,
+#endif
 };
 
 EepromDevice eepdev_24xx = {

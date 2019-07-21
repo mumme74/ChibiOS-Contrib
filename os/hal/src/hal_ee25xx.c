@@ -264,8 +264,13 @@ static msg_t ll_eeprom_write(const SPIEepromFileConfig *eepcfg, uint32_t offset,
  */
 static size_t __clamp_size(void *ip, size_t n) {
 
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  if (((size_t)eepfs_getposition(ip, 0) + n) > (size_t)eepfs_getsize(ip, 0))
+    return eepfs_getsize(ip, 0) - eepfs_getposition(ip, 0);
+#else
   if (((size_t)eepfs_getposition(ip) + n) > (size_t)eepfs_getsize(ip))
     return eepfs_getsize(ip) - eepfs_getposition(ip);
+#endif
   else
     return n;
 }
@@ -276,14 +281,24 @@ static size_t __clamp_size(void *ip, size_t n) {
 static msg_t __fitted_write(void *ip, const uint8_t *data, size_t len, uint32_t *written) {
 
   msg_t status = MSG_RESET;
+  msg_t pos;
+
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  pos = eepfs_getposition(ip, 0);
+#else
+  pos = eepfs_getposition(ip);
+#endif
 
   osalDbgAssert(len > 0, "len must be greater than 0");
 
-  status = ll_eeprom_write(((SPIEepromFileStream *)ip)->cfg,
-                           eepfs_getposition(ip), data, len);
+  status = ll_eeprom_write(((SPIEepromFileStream *)ip)->cfg, pos, data, len);
   if (status == MSG_OK) {
     *written += len;
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+    eepfs_setposition(ip, eepfs_getposition(ip, 0) + len);
+#else
     eepfs_lseek(ip, eepfs_getposition(ip) + len);
+#endif
   }
   return status;
 }
@@ -302,6 +317,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
   uint16_t pagesize;
   uint32_t firstpage;
   uint32_t lastpage;
+  msg_t pos;
 
   volatile const SPIEepromFileConfig *cfg = ((SPIEepromFileStream *)ip)->cfg;
 
@@ -314,9 +330,15 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
   if (n == 0)
     return 0;
 
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  pos = eepfs_getposition(ip, 0);
+#else
+  pos = eepfs_getposition(ip);
+#endif
+
   pagesize  = cfg->pagesize;
-  firstpage = (cfg->barrier_low + eepfs_getposition(ip)) / pagesize;
-  lastpage  = ((cfg->barrier_low + eepfs_getposition(ip) + n) - 1) / pagesize;
+  firstpage = (cfg->barrier_low + pos) / pagesize;
+  lastpage  = ((cfg->barrier_low + pos + n) - 1) / pagesize;
 
   /* data fits in single page */
   if (firstpage == lastpage) {
@@ -327,7 +349,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
   
   else {
     /* write first piece of data to first page boundary */
-    len =  ((firstpage + 1) * pagesize) - eepfs_getposition(ip);
+    len =  ((firstpage + 1) * pagesize) - pos;
     len -= cfg->barrier_low;
     if (__fitted_write(ip, bp, len, &written) != MSG_OK)
       return written;
@@ -359,7 +381,7 @@ static size_t write(void *ip, const uint8_t *bp, size_t n) {
  * of read bytes.
  */
 static size_t read(void *ip, uint8_t *bp, size_t n) {
-
+  msg_t pos;
   msg_t status = MSG_OK;
 
   osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL));
@@ -372,12 +394,20 @@ static size_t read(void *ip, uint8_t *bp, size_t n) {
     return 0;
 
   /* call low level function */
-  status = ll_eeprom_read(((SPIEepromFileStream *)ip)->cfg,
-                          eepfs_getposition(ip), bp, n);
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  pos = eepfs_getposition(ip, 0);
+#else
+  pos = eepfs_getposition(ip);
+#endif
+  status = ll_eeprom_read(((SPIEepromFileStream *)ip)->cfg, pos, bp, n);
   if (status != MSG_OK)
     return 0;
   else {
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+    eepfs_setposition(ip, (eepfs_getposition(ip, 0) -n));
+#else
     eepfs_lseek(ip, (eepfs_getposition(ip) + n));
+#endif
     return n;
   }
 }
@@ -392,7 +422,11 @@ static const struct EepromFileStreamVMT vmt = {
   eepfs_geterror,
   eepfs_getsize,
   eepfs_getposition,
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+  eepfs_setposition,
+#else
   eepfs_lseek,
+#endif
 };
 
 EepromDevice eepdev_25xx = {

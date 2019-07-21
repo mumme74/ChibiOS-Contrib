@@ -30,9 +30,12 @@
 #include <string.h>
 
 #if defined(HAL_USE_EEPROM) && HAL_USE_EEPROM
-
+# if EEPROM_USE_EE24XX
 extern EepromDevice eepdev_24xx;
+# endif
+# if EEPROM_USE_EE25XX
 extern EepromDevice eepdev_25xx;
+# endif
 
 EepromDevice *__eeprom_drv_table[] = {
   /* I2C related. */
@@ -132,8 +135,42 @@ size_t EepromWriteWord(EepromFileStream *efs, uint32_t data) {
   return fileStreamWrite(efs, (uint8_t *)&data, sizeof(data));
 }
 
-msg_t eepfs_getsize(void *ip) {
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+msg_t eepfs_getsize(void *ip, fileoffset_t *size) {
+  uint32_t h, l;
 
+  osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL) &&
+             (((EepromFileStream *)ip)->cfg != NULL));
+
+  h = ((EepromFileStream *)ip)->cfg->barrier_hi;
+  l = ((EepromFileStream *)ip)->cfg->barrier_low;
+  *size = h - l;
+  return FILE_OK;
+}
+
+msg_t eepfs_getposition(void *ip, fileoffset_t *offset) {
+
+  osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL));
+
+  return (*offset = ((EepromFileStream *)ip)->position);
+}
+
+msg_t eepfs_setposition(void *ip, fileoffset_t offset) {
+
+  uint32_t size;
+
+  osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL));
+
+  eepfs_getsize(ip, &size);
+  if (offset > size)
+    offset = size;
+  ((EepromFileStream *)ip)->position = offset;
+  return FILE_OK;
+}
+
+#else /* _CHIBIOS_HAL_CONF_VER_7_0_ */
+
+msg_t eepfs_getsize(void *ip) {
   uint32_t h, l;
 
   osalDbgCheck((ip != NULL) && (((EepromFileStream *)ip)->vmt != NULL) &&
@@ -163,6 +200,8 @@ msg_t eepfs_lseek(void *ip, fileoffset_t offset) {
   ((EepromFileStream *)ip)->position = offset;
   return offset;
 }
+
+#endif /* _CHIBIOS_HAL_CONF_VER_7_0_ */
 
 msg_t eepfs_close(void *ip) {
 

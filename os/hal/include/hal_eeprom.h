@@ -127,13 +127,20 @@ size_t EepromWriteByte(EepromFileStream *efs, uint8_t data);
 size_t EepromWriteHalfword(EepromFileStream *efs, uint16_t data);
 size_t EepromWriteWord(EepromFileStream *efs, uint32_t data);
 
-msg_t eepfs_getsize(void *ip);
-msg_t eepfs_getposition(void *ip);
-msg_t eepfs_lseek(void *ip, fileoffset_t offset);
 msg_t eepfs_close(void *ip);
 msg_t eepfs_geterror(void *ip);
 msg_t eepfs_put(void *ip, uint8_t b);
 msg_t eepfs_get(void *ip);
+
+#ifdef _CHIBIOS_HAL_CONF_VER_7_0_
+msg_t eepfs_getsize(void *ip, fileoffset_t *offset);
+msg_t eepfs_getposition(void *ip, fileoffset_t *offset);
+msg_t eepfs_setposition(void *ip, fileoffset_t offset);
+#else
+msg_t eepfs_getsize(void *ip);
+msg_t eepfs_getposition(void *ip);
+msg_t eepfs_lseek(void *ip, fileoffset_t offset);
+#endif
 
 #include "hal_ee24xx.h"
 #include "hal_ee25xx.h"
